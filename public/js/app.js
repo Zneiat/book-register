@@ -5,6 +5,7 @@ $(document).ready(function () {
     app.data.register();
     app.main.register();
     app.editor.register();
+	app.danmaku.register();
     app.socket.register();
 
     app.notify.info('程序初始化完毕');
@@ -89,12 +90,15 @@ app.main = {
         this.categoryListInit(this.categoryListDom);
 
         // Login Check
-        if (!!app.data.getUser())
-            this.toggleCategoryList();
+        //if (!!app.data.getUser())
+        //    this.toggleCategoryList();
 
+        var yourName = this.loginDom.find('#yourName');
+        if (!!app.data.getUser())
+            yourName.val(app.data.getUser());
+            
         // Login Form
         this.loginDom.submit(function () {
-            var yourName = $(this).find('#yourName');
             var yourNameVal = $.trim(yourName.val());
             if (yourNameVal.length < 1) {
                 app.notify.warning('请填入你的真实姓名');
@@ -107,7 +111,9 @@ app.main = {
 
             app.notify.info('欢迎使用 書記 Online');
             app.main.toggleCategoryList(yourNameVal);
-
+            app.socket.allowConnect = true;
+            app.socket.tryConnect();
+            
             return false;
         });
 
@@ -125,6 +131,8 @@ app.main = {
     },
 
     toggleLogin: function () {
+        app.socket.allowConnect = false;
+        app.socket.webSocket.close();
         this.loginDom.find('#yourName').val(app.data.getUser());
         this.dom.removeClass('large-size');
     },
@@ -333,6 +341,7 @@ app.main.categoryListInit = function (appendingDom) {
             );
             itemDom.find('.item-head').click(function () {
                 obj.startWork(index);
+				app.socket.broadcastNotify('已进入类目 ' + categoryName, 4);
             });
             itemDom.find('.item-meta > a').click(function () {
                 var content = $(
@@ -471,6 +480,7 @@ app.main.createCategoryDialog = function () {
                         app.notify.success('类目 ' + categoryName + ' 已存在');
                     } else {
                         app.notify.success('类目 ' + categoryName + ' 创建成功');
+                        app.socket.broadcastNotify('创建了类目 ' + categoryName, 1);
                     }
 
                     app.data.categoryHandle(categoryName, function (index, category) {
@@ -1252,6 +1262,7 @@ app.api = {
                 if (resp.checkMakeNotify()) {
                     // 数据修改 清空
                     app.editor.setLocalData({});
+					app.socket.broadcastNotify('上传了数据', 4);
                 }
                 app.editor.updateToolBar();
             }, error: function () {
@@ -1285,10 +1296,14 @@ app.api = {
 };
 
 app.socket = {
-    url: 'ws://' + window.location.host + ':51230',
+    allowConnect: false,
+    url: 'ws://' + document.domain + ':51230',
     webSocket: null,
     register: function () {
         var checker = function () {
+            if (!app.socket.allowConnect)
+                return;
+            
             app.socket.tryConnect();
         };
 
@@ -1322,7 +1337,7 @@ app.socket = {
                     if (!app.socket.enableNotify)
                         return;
                     // app.notify.show(data['msg'], data['level']);
-                    app.danmaku.show(data['msg']);
+                    app.danmaku.show(data['msg'], data['mode']);
                     break;
                 case 'getOnline':
                     app.main.categoryList.setHeadOnline(data['online_total'], data['str']);
@@ -1351,8 +1366,8 @@ app.socket = {
         this.sendData('getOnline', {});
         return true;
     },
-    broadcastNotify: function (msg) {
-        this.sendData('broadcastNotify', {'msg': msg});
+    broadcastNotify: function (msg, mode) {
+        this.sendData('broadcastNotify', {'msg': msg, 'mode': mode});
         return true;
     },
     debugLog: function (msg) {
@@ -1365,32 +1380,36 @@ transform: translateX(-910.301px) translateY(0px) translateZ(0px);
     transition: -webkit-transform 0s linear;
  */
 app.danmaku = {
-    show: function (message) {
-        var wrapDom = $('.danmaku-wrap');
-        if (wrapDom.length === 0)
-            wrapDom = $('<div class="danmaku-wrap" />').appendTo('body');
-
-        var bulletDom = $('<div class="danmaku-item"><p class="danmaku-message"></p></div>');
-        bulletDom.find('.danmaku-message').html($.htmlEncode(message));
-        bulletDom.prependTo(wrapDom);
-
-        var bottom = Math.floor(Math.random() * $(document.body).height() + 40);
-        bulletDom.css('bottom', bottom + 'px');
-        bulletDom.animate({marginRight: $(document.body).width() + bulletDom.width()}, {
-            duration: 'normal',
-            easing: 'easeOutBounce',
-            step: function(now, fx) {
-                // $(this).css('transform', 'translateX(-' + now + 'px) translateY(0px) translateZ(0px)');
-            },
-            /*easing: 'linear',*/
-            queue: false,
-            done: function(){
-                bulletDom.remove();
-            }
-        });
+    register: function () {
+        // Comment Manager
+        var elem = $('<div class="danmaku-layer-wrap"><div class="danmaku-layer"></div></div>').appendTo('body');
+        var cm = new CommentManager(elem.find('.danmaku-layer').get(0));
+        cm.init();
+        cm.start(); // 启用弹幕播放
+        window.CM = cm;
+    },
+    show: function (message, mode) {
+        mode = Number(mode);
+        if (mode === 4) {
+            CM.send({
+                "mode": 4,
+                "text": message,
+                "stime":0,
+                "size":25,
+                "color":0x2196F3
+            })
+        } else {
+            CM.send({
+                mode: mode,
+                text: message,
+                stime: 0,
+                size: 25,
+                color: 0xffffff,
+                dur: 8000
+            });
+        }
     }
 };
-
 app.notify = {
     showEnabled: false,
     setShowEnabled: function (showEnabled) {
